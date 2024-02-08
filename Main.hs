@@ -1,9 +1,15 @@
 module Main where
 
+import Control.Concurrent (forkIO, forkOS)
+import Control.Monad (unless)
 import Data.Fixed (mod')
+import Debug.Trace
+import GHC.Conc (threadDelay)
 import GHC.IO
 import Graphics.Gloss
 import Graphics.Gloss.Interface.Pure.Game
+import qualified SDL
+import qualified SDL.Mixer as Mix
 import System.Process (readProcess)
 import System.Random (randomRIO)
 
@@ -48,6 +54,8 @@ mainWindow = InWindow "Endless Winter" (800, 400) (100, 100)
 
 data JumpState = NoneJump | SingleJump | DoubleJump deriving (Eq)
 
+data GameState = Playing | Over deriving (Eq)
+
 data Barrel = Barrel
   { isStacked :: Bool,
     position :: Float
@@ -61,7 +69,8 @@ data Game = Game
     playerYPos :: Float,
     jumpState :: JumpState,
     verticalVelocity :: Float,
-    barrels :: [Barrel]
+    barrels :: [Barrel],
+    gameState :: GameState
   }
 
 initialState :: Game
@@ -71,10 +80,11 @@ initialState =
       playerAnimation = Running,
       animationFrame = 0,
       animationTimeBuffer = 0,
-      playerYPos = groundYPos,
+      playerYPos = groundYPos + 500,
       jumpState = NoneJump,
       verticalVelocity = 0,
-      barrels = [Barrel {isStacked = True, position = 600}]
+      barrels = [Barrel {isStacked = True, position = 600}],
+      gameState = Playing
     }
 
 parallaxLayers :: [(String, Float)]
@@ -117,6 +127,9 @@ fallingSpriteFiles =
 barrelSprite :: Picture
 barrelSprite = (Scale 3 3 . unsafePerformIO . loadBMP) "assets/barrel.bmp"
 
+menuSprite :: Picture
+menuSprite = unsafePerformIO . loadBMP $ "assets/menu.bmp"
+
 gravitationalConstant :: Float
 gravitationalConstant = -1000
 
@@ -135,19 +148,43 @@ fallingSprites = map (Scale 3 3 . unsafePerformIO . loadBMP) fallingSpriteFiles
 backgroundSprites :: [Picture]
 backgroundSprites = map (unsafePerformIO . loadBMP . fst) parallaxLayers
 
+horizontalCollisionDelta :: Float
+horizontalCollisionDelta = 20
+
+singleBarrelVerticalCollsion :: Float
+singleBarrelVerticalCollsion = groundYPos + 45
+
+doubleBarrelVerticalCollsion :: Float
+doubleBarrelVerticalCollsion = groundYPos + 90
+
 data PlayerAnimation = Running | Jumping | Falling
+
+musicThread :: IO ()
+musicThread = do
+  SDL.initialize [SDL.InitAudio]
+  Mix.openAudio Mix.defaultAudio 256
+  music <- Mix.load "assets/music.ogg"
+  Mix.playMusic Mix.Forever music
 
 main :: IO ()
 main = do
+  _ <- forkOS musicThread
   play mainWindow white 60 initialState render handleEvents update
 
 render :: Game -> Picture
-render game =
-  Pictures
-    [ renderBackground game,
-      renderPlayer (playerAnimation game) (animationFrame game) (playerYPos game),
-      renderBarrels (barrels game)
-    ]
+render game
+  | gameState game == Playing =
+      Pictures
+        [ renderBackground game,
+          renderBarrels (barrels game),
+          renderPlayer (playerAnimation game) (animationFrame game) (playerYPos game)
+        ]
+  | otherwise =
+      Pictures
+        [ renderBackground game,
+          renderBarrels (barrels game),
+          menuSprite
+        ]
 
 renderBarrels :: [Barrel] -> Picture
 renderBarrels barrels = Pictures $ map renderBarrel barrels
@@ -193,24 +230,59 @@ handleEvents (EventKey (SpecialKey KeySpace) Down _ _) game
           jumpState = DoubleJump
         }
   | otherwise = game
+handleEvents (EventKey (SpecialKey KeyEnter) Down _ _) game
+  | gameState game == Playing = game
+  | otherwise = initialState
 handleEvents _ game = game
 
 update :: Float -> Game -> Game
-update dt game =
-  updateBarrels
-    dt
-    ( updatePlayerPhysics
+update dt game
+  | gameState game == Playing =
+      updateBarrels
         dt
-        ( checkAnimationState
-            (playerAnimation game)
-            (updateAnimations (playerAnimation game) dt (updateBackground dt game))
+        ( checkCollision
+            dt
+            ( updatePlayerPhysics
+                dt
+                ( checkAnimationState
+                    (playerAnimation game)
+                    (updateAnimations (playerAnimation game) dt (updateBackground dt game))
+                )
+            )
         )
-    )
+  | otherwise = game
+
+checkSingleBarrelCollision :: Float -> Game -> Barrel -> Bool
+checkSingleBarrelCollision dt game barrel
+  | (abs (position barrel - playerXPos) < horizontalCollisionDelta)
+      && (playerYPos game < singleBarrelVerticalCollsion)
+      && dt > 0 =
+      trace "There was a collision" True
+  | otherwise = False
+
+checkStackedBarrelCollision :: Float -> Game -> Barrel -> Bool
+checkStackedBarrelCollision dt game barrel
+  | (abs (position barrel - playerXPos) < horizontalCollisionDelta)
+      && (playerYPos game < doubleBarrelVerticalCollsion)
+      && dt > 0 =
+      trace "There was a collision" True
+  | otherwise = False
+
+checkBarrelCollision :: Float -> Game -> Barrel -> Bool
+checkBarrelCollision dt game barrel
+  | isStacked barrel = checkStackedBarrelCollision dt game barrel
+  | otherwise = checkSingleBarrelCollision dt game barrel
+
+checkCollision :: Float -> Game -> Game
+checkCollision dt game
+  | null (barrels game) = game
+  | otherwise = if any (checkBarrelCollision dt game) (barrels game) then game {gameState = Over} else game {gameState = Playing}
 
 clearPastBarrels :: Game -> Game
-clearPastBarrels game = game {
-  barrels = dropWhile (\x -> position x + 100 < -screenWidth / 2) (barrels game)
-}
+clearPastBarrels game =
+  game
+    { barrels = dropWhile (\x -> position x + 100 < -screenWidth / 2) (barrels game)
+    }
 
 updateBarrels :: Float -> Game -> Game
 updateBarrels dt game =
