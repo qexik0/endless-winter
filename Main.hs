@@ -70,7 +70,9 @@ data Game = Game
     jumpState :: JumpState,
     verticalVelocity :: Float,
     barrels :: [Barrel],
-    gameState :: GameState
+    gameState :: GameState,
+    score :: Float,
+    highScore :: Float
   }
 
 initialState :: Game
@@ -84,7 +86,9 @@ initialState =
       jumpState = NoneJump,
       verticalVelocity = 0,
       barrels = [Barrel {isStacked = True, position = 600}],
-      gameState = Initial
+      gameState = Initial,
+      score = 0,
+      highScore = 0
     }
 
 parallaxLayers :: [(String, Float)]
@@ -180,7 +184,8 @@ render game
       Pictures
         [ renderBackground game,
           renderBarrels (barrels game),
-          renderPlayer (playerAnimation game) (animationFrame game) (playerYPos game)
+          renderPlayer (playerAnimation game) (animationFrame game) (playerYPos game),
+          renderScore (score game) (highScore game)
         ]
   | gameState game == Over =
       Pictures
@@ -197,6 +202,13 @@ render game
 
 renderBarrels :: [Barrel] -> Picture
 renderBarrels barrels = Pictures $ map renderBarrel barrels
+
+renderScore :: Float -> Float -> Picture
+renderScore score hightScore =
+  Pictures
+    [ translate 250 170 $ scale 0.12 0.12 $ color red $ text ("Score: " ++ show (round score)),
+      translate 250 140 $ scale 0.12 0.12 $ color red $ text ("High score: " ++ show (round hightScore))
+    ]
 
 renderBarrel :: Barrel -> Picture
 renderBarrel barrel
@@ -241,25 +253,32 @@ handleEvents (EventKey (SpecialKey KeySpace) Down _ _) game
   | otherwise = game
 handleEvents (EventKey (SpecialKey KeyEnter) Down _ _) game
   | gameState game == Playing = game
-  | otherwise = initialState {gameState = Playing}
+  | otherwise = initialState {gameState = Playing, highScore = highScore game}
 handleEvents _ game = game
 
 update :: Float -> Game -> Game
 update dt game
   | gameState game == Playing =
-      updateBarrels
+      updateScore
         dt
-        ( checkCollision
+        ( updateBarrels
             dt
-            ( updatePlayerPhysics
+            ( checkCollision
                 dt
-                ( checkAnimationState
-                    (playerAnimation game)
-                    (updateAnimations (playerAnimation game) dt (updateBackground dt game))
+                ( updatePlayerPhysics
+                    dt
+                    ( checkAnimationState
+                        (playerAnimation game)
+                        (updateAnimations (playerAnimation game) dt (updateBackground dt game))
+                    )
                 )
             )
         )
   | otherwise = game
+
+updateScore dt game = game {score = newScore, highScore = max (highScore game) newScore}
+  where
+    newScore = score game + 20 * dt
 
 checkSingleBarrelCollision :: Float -> Game -> Barrel -> Bool
 checkSingleBarrelCollision dt game barrel
