@@ -54,7 +54,7 @@ mainWindow = InWindow "Endless Winter" (800, 400) (100, 100)
 
 data JumpState = NoneJump | SingleJump | DoubleJump deriving (Eq)
 
-data GameState = Playing | Over deriving (Eq)
+data GameState = Initial | Playing | Over deriving (Eq)
 
 data Barrel = Barrel
   { isStacked :: Bool,
@@ -84,7 +84,7 @@ initialState =
       jumpState = NoneJump,
       verticalVelocity = 0,
       barrels = [Barrel {isStacked = True, position = 600}],
-      gameState = Playing
+      gameState = Initial
     }
 
 parallaxLayers :: [(String, Float)]
@@ -129,6 +129,9 @@ barrelSprite = (Scale 3 3 . unsafePerformIO . loadBMP) "assets/barrel.bmp"
 
 menuSprite :: Picture
 menuSprite = unsafePerformIO . loadBMP $ "assets/menu.bmp"
+
+gameOverScreen :: Picture
+gameOverScreen = unsafePerformIO . loadBMP $ "assets/dead.bmp"
 
 gravitationalConstant :: Float
 gravitationalConstant = -1000
@@ -178,6 +181,12 @@ render game
         [ renderBackground game,
           renderBarrels (barrels game),
           renderPlayer (playerAnimation game) (animationFrame game) (playerYPos game)
+        ]
+  | gameState game == Over =
+      Pictures
+        [ renderBackground game,
+          renderBarrels (barrels game),
+          gameOverScreen
         ]
   | otherwise =
       Pictures
@@ -232,7 +241,7 @@ handleEvents (EventKey (SpecialKey KeySpace) Down _ _) game
   | otherwise = game
 handleEvents (EventKey (SpecialKey KeyEnter) Down _ _) game
   | gameState game == Playing = game
-  | otherwise = initialState
+  | otherwise = initialState {gameState = Playing}
 handleEvents _ game = game
 
 update :: Float -> Game -> Game
